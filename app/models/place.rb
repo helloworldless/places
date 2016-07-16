@@ -1,19 +1,32 @@
 # place.rb
 
-class Place
+class Place #< ActiveRecord::Base
+
+  #has_many :photos
 
   include ActiveModel::Model
 
   attr_accessor :id, :formatted_address, :location, :address_components
 
+  def persisted?
+    !@id.nil?
+  end
+
   def initialize(hash)
     @id = hash[:_id].to_s
     @formatted_address = hash[:formatted_address]
+    #byebug
     @location = Point.new(hash[:geometry][:geolocation])
+    #byebug
     # @address_components = hash[:address_components]
     @address_components = []
-    hash[:address_components].each do |address_component|
-      @address_components.push AddressComponent.new(address_component)
+
+    # account for case when address components not given
+    # eg in geo_spec
+    if !hash[:address_components].nil?
+      hash[:address_components].each do |address_component|
+        @address_components.push AddressComponent.new(address_component)
+      end
     end
   end
 
@@ -44,8 +57,15 @@ class Place
   end
 
   def self.find(id)
-    _id = BSON::ObjectId.from_string(id)
-    place = collection.find(:_id=>_id).first
+    # if !id.nil? && !id==''
+    #byebug
+    if !id.nil?
+      if not id==''
+        id = BSON::ObjectId.from_string(id) unless id.class == BSON::ObjectId
+      end
+    end
+    place = collection.find(:_id=>id).first
+    #byebug
     return place.nil? ? nil : Place.new(place)
   end
 
@@ -96,9 +116,56 @@ class Place
       {:$project=>{:_id=>1}}
       ])
 
-    result = result.to_a.map {|place| place[:_id].to_s}
+    result.to_a.map {|place| place[:_id].to_s}
 
   end
+
+  def self.create_indexes
+    collection.indexes.create_one({'geometry.geolocation'=>Mongo::Index::GEO2DSPHERE})
+  end
+
+  def self.remove_indexes
+    collection.indexes.drop_one('geometry.geolocation_2dsphere')
+  end
+
+  def self.near(point, max_meters=0)
+
+    # allow point to be a Point or a Hash
+    # Point.to_hash returns a hash based on the @ instance variables
+    # Hash.to_hash simply returns itself
+    point = point.to_hash
+
+    near = {:$geometry=>{:type=>"Point", :coordinates=>[point[:coordinates][0], point[:coordinates][1]]}}
+    near[:$maxDistance] = max_meters unless max_meters==0
+
+    collection.find({
+      'geometry.geolocation'=>{
+        :$near=>near
+      }
+    })
+  end
+
+  def near(max_meters=0)
+    #hash = self.to_hash
+    result = self.class.near(self.location, max_meters)
+    self.class.to_places(result)
+    #places = []
+    #result.each do |doc|
+    #  places << self.class.to_places(doc)
+    #end
+  end
+
+  def photos(offset=0, limit=0)
+    if limit==0
+      view = Photo.mongo_client.database.fs.find('metadata.place'=>BSON::ObjectId.from_string(@id)).skip(offset)
+    else 
+      view = Photo.mongo_client.database.fs.find('metadata.place'=>BSON::ObjectId.from_string(@id)).skip(offset).limit(limit)
+    end
+
+    view = view.to_a
+    view.map {|doc| Photo.new(doc)}
+  end
+
 
 
 end

@@ -17,6 +17,8 @@ class Point
 
   def initialize(hash)
 
+    #byebug
+
     geo_coords = hash[:coordinates] unless hash[:coordinates].nil?
     @latitude = geo_coords[1] unless hash[:coordinates].nil?
     @longitude = geo_coords[0] unless hash[:coordinates].nil?
